@@ -17,6 +17,7 @@ from flask import Flask, request, jsonify, render_template
 app = Flask(__name__, template_folder='templates', static_folder='static')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+NPZ_WEIGHTS_PATH = os.path.join(BASE_DIR, 'model_weights.npz')
 WEIGHTS_PATH = os.path.join(BASE_DIR, 'model.weights.h5')
 MODEL_PATH = os.path.join(BASE_DIR, 'model.h5')
 TARGET_LAYER_NAME = 'block5_conv4'
@@ -60,11 +61,12 @@ def create_fine_tuned_vgg19():
     return model
 
 class DynamicModelManager:
-    def __init__(self, model_path, weights_path):
+    def __init__(self, model_path, weights_path, npz_path):
         self.model_path = model_path
         self.weights_path = weights_path
+        self.npz_path = npz_path
         self.model = None
-        self.grad_models = {}  # Cache grad_models per layer for ultra-fast inference
+        self.grad_models = {}
         self.last_mtime = 0
         self.lock = threading.Lock()
         self.load_model_if_updated()
@@ -90,23 +92,41 @@ class DynamicModelManager:
         if not app_config.get('auto_reload', True) and not force and self.model is not None:
             return True
         with self.lock:
-            # 1. Prefer loading lightweight weights file model.weights.h5 (76MB - included in repo)
+            # 1. Prefer portable NumPy compressed weights file model_weights.npz (71MB - 100% version independent)
+            if os.path.exists(self.npz_path):
+                current_mtime = os.path.getmtime(self.npz_path)
+                if current_mtime > self.last_mtime or self.model is None or force:
+                    print(f"[ModelManager] Loading fine-tuned weights from {self.npz_path}...")
+                    try:
+                        built_model = create_fine_tuned_vgg19()
+                        npz = np.load(self.npz_path)
+                        weights = [npz[f'arr_{i}'] for i in range(len(npz.files))]
+                        built_model.set_weights(weights)
+                        self.model = built_model
+                        self.last_mtime = current_mtime
+                        self.build_grad_model_cache()
+                        print("[ModelManager] Model & Grad-CAM cache successfully loaded from model_weights.npz.")
+                        return True
+                    except Exception as e:
+                        print(f"[ModelManager] Error loading npz weights: {e}")
+
+            # 2. Fallback to model.weights.h5
             if os.path.exists(self.weights_path):
                 current_mtime = os.path.getmtime(self.weights_path)
                 if current_mtime > self.last_mtime or self.model is None or force:
-                    print(f"[ModelManager] Building VGG19 & loading fine-tuned weights from {self.weights_path}...")
+                    print(f"[ModelManager] Loading fine-tuned weights from {self.weights_path}...")
                     try:
                         built_model = create_fine_tuned_vgg19()
                         built_model.load_weights(self.weights_path)
                         self.model = built_model
                         self.last_mtime = current_mtime
                         self.build_grad_model_cache()
-                        print("[ModelManager] Model & Grad-CAM cache successfully loaded and ready.")
+                        print("[ModelManager] Model & Grad-CAM cache successfully loaded from model.weights.h5.")
                         return True
                     except Exception as e:
-                        print(f"[ModelManager] Error loading weights: {e}")
+                        print(f"[ModelManager] Error loading h5 weights: {e}")
 
-            # 2. Fallback to full model.h5 if present locally
+            # 3. Fallback to full model.h5 if present locally
             if os.path.exists(self.model_path):
                 current_mtime = os.path.getmtime(self.model_path)
                 if current_mtime > self.last_mtime or self.model is None or force:
@@ -116,13 +136,13 @@ class DynamicModelManager:
                         self.model = loaded_model
                         self.last_mtime = current_mtime
                         self.build_grad_model_cache()
-                        print("[ModelManager] Full model & Grad-CAM cache successfully loaded.")
+                        print("[ModelManager] Full model successfully loaded from model.h5.")
                         return True
                     except Exception as e:
                         print(f"[ModelManager] Error loading full model: {e}")
 
             if self.model is None:
-                print("[ModelManager] Warning: Neither model.weights.h5 nor model.h5 could be loaded.")
+                print("[ModelManager] Warning: No model weights file could be loaded.")
                 return False
             return True
 
@@ -134,7 +154,6 @@ class DynamicModelManager:
         self.load_model_if_updated()
         if layer_name in self.grad_models:
             return self.grad_models[layer_name], layer_name
-        # Fallback if cached layer not present
         if self.model:
             try:
                 fallback_model = tf.keras.models.Model(
@@ -153,7 +172,7 @@ class DynamicModelManager:
             return fallback_model, fallback_name
         return None, layer_name
 
-model_manager = DynamicModelManager(MODEL_PATH, WEIGHTS_PATH)
+model_manager = DynamicModelManager(MODEL_PATH, WEIGHTS_PATH, NPZ_WEIGHTS_PATH)
 
 
 def crop_brain_contour(image):
@@ -246,7 +265,7 @@ def get_status():
     return jsonify({
         'status': 'ready' if is_loaded else 'error',
         'model_loaded': is_loaded,
-        'weights_filename': 'model.weights.h5',
+        'weights_filename': 'model_weights.npz',
         'last_weight_reload': mtime_str,
         'target_layer': app_config['target_layer'],
         'colormap': app_config['colormap'],
