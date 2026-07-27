@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NeuroScan AI - Brain MRI Analysis & Neural Explainability</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Main Style CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="app-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="brand">
+                    <i class="fa-solid fa-brain brand-icon"></i>
+                    <div class="brand-text">
+                        <span class="brand-title">NeuroScan AI</span>
+                        <span class="brand-version">v2.4 - Medical AI</span>
+                    </div>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <a href="#analysis" class="nav-item active" id="navAnalysis">
+                    <i class="fa-solid fa-chart-pie"></i>
+                    <span>Analysis</span>
+                </a>
+                <a href="#reports" class="nav-item" id="navReports">
+                    <i class="fa-solid fa-file-waveform"></i>
+                    <span>Reports</span>
+                </a>
+                <a href="#settings" class="nav-item" id="navSettings">
+                    <i class="fa-solid fa-sliders"></i>
+                    <span>Settings</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="model-active-badge">
+                    <span class="pulse-dot"></span>
+                    <div class="model-info">
+                        <span class="model-label">MODEL ACTIVE</span>
+                        <span class="model-name">VGG-19 Custom</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Workspace -->
+        <main class="main-content">
+            <!-- VIEW 1: ANALYSIS DASHBOARD -->
+            <section class="view-section active" id="viewAnalysis">
+                <!-- Top Header Bar -->
+                <header class="top-header">
+                    <div class="header-titles">
+                        <h1 class="header-title">Brain MRI Analysis</h1>
+                        <p class="header-subtitle">Detect & classify tumor type and visualize activation regions</p>
+                    </div>
+                    <div class="header-status">
+                        <div class="status-pill ready" id="systemStatusPill">
+                            <i class="fa-solid fa-circle"></i>
+                            <span id="systemStatusText">System Ready</span>
+                        </div>
+                    </div>
+                </header>
+
+                <!-- 2x2 Dashboard Cards Grid -->
+                <div class="dashboard-grid">
+                    <!-- Card 01: Load MRI Scan -->
+                    <div class="card card-load">
+                        <div class="card-header">
+                            <div class="card-title-group">
+                                <span class="card-number">01</span>
+                                <div class="card-headers-text">
+                                    <h3 class="card-title">Load MRI Scan</h3>
+                                    <p class="card-subtitle">JPG • PNG • DICOM-export — One image per pass</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="drop-zone" id="dropZone">
+                                <input type="file" id="fileInput" accept="image/*" class="file-input-hidden">
+                                <div class="drop-icon-wrapper">
+                                    <i class="fa-solid fa-arrow-up-from-bracket"></i>
+                                </div>
+                                <div class="drop-text-content">
+                                    <span class="drop-title">Drop scan here</span>
+                                    <span class="drop-or">or <span class="browse-link">browse files</span></span>
+                                </div>
+                                <div class="file-tag hidden" id="fileTag">
+                                    <i class="fa-solid fa-image"></i>
+                                    <span id="fileNameDisplay">image.jpg</span>
+                                    <button type="button" class="btn-remove-file" id="btnRemoveFile"><i class="fa-solid fa-xmark"></i></button>
+                                </div>
+                            </div>
+
+                            <button type="button" class="btn-run-analysis" id="btnRunAnalysis" disabled>
+                                <i class="fa-regular fa-circle-play btn-icon" id="btnIcon"></i>
+                                <span id="btnText">Run Analysis</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Card 02: Scan Preview -->
+                    <div class="card card-preview">
+                        <div class="card-header">
+                            <div class="card-title-group">
+                                <span class="card-number">02</span>
+                                <div class="card-headers-text">
+                                    <h3 class="card-title">Scan Preview</h3>
+                                    <p class="card-subtitle">Original MRI input image</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-body preview-body">
+                            <div class="image-container" id="previewContainer">
+                                <div class="empty-state" id="previewEmptyState">
+                                    <i class="fa-solid fa-skull"></i>
+                                    <span>Awaiting Input Image</span>
+                                </div>
+                                <img src="" alt="Scan Preview" id="scanPreviewImg" class="preview-img hidden">
+                                <span class="image-filename-tag hidden" id="previewFilenameTag"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 03: Diagnostic Output -->
+                    <div class="card card-diagnostic">
+                        <div class="card-header">
+                            <div class="card-title-group">
+                                <span class="card-number">03</span>
+                                <div class="card-headers-text">
+                                    <h3 class="card-title">Diagnostic Output</h3>
+                                    <p class="card-subtitle">AI classification result</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-body diagnostic-body">
+                            <div class="empty-state" id="diagnosticEmptyState">
+                                <i class="fa-solid fa-microscope"></i>
+                                <span>No prediction yet</span>
+                            </div>
+
+                            <div class="diagnostic-results hidden" id="diagnosticResults">
+                                <div class="gauge-wrapper">
+                                    <svg class="gauge-svg" viewBox="0 0 160 160">
+                                        <circle class="gauge-bg" cx="80" cy="80" r="68"></circle>
+                                        <circle class="gauge-fill" id="gaugeFill" cx="80" cy="80" r="68" stroke-dasharray="427" stroke-dashoffset="427"></circle>
+                                    </svg>
+                                    <div class="gauge-center-text">
+                                        <span class="gauge-percentage" id="confidenceValue">0%</span>
+                                        <span class="gauge-label">CONFIDENCE</span>
+                                    </div>
+                                </div>
+
+                                <div class="prediction-info">
+                                    <h2 class="prediction-class" id="predictionClass">--</h2>
+                                    <span class="prediction-sublabel">PREDICTED DIAGNOSIS</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card 04: Grad-CAM Heatmap -->
+                    <div class="card card-gradcam">
+                        <div class="card-header">
+                            <div class="card-title-group">
+                                <span class="card-number">04</span>
+                                <div class="card-headers-text">
+                                    <h3 class="card-title">Grad-CAM Heatmap</h3>
+                                    <p class="card-subtitle">Neural activation visualization</p>
+                                </div>
+                            </div>
+                            <span class="badge-explainability">AI EXPLAINABILITY</span>
+                        </div>
+                        <div class="card-body gradcam-body">
+                            <div class="image-container" id="gradcamContainer">
+                                <div class="empty-state" id="gradcamEmptyState">
+                                    <i class="fa-solid fa-bullseye"></i>
+                                    <span>Heatmap generated after analysis</span>
+                                </div>
+                                <img src="" alt="Grad-CAM Visualization" id="gradcamImg" class="gradcam-img hidden">
+                            </div>
+                            <span class="layer-distribution-tag hidden" id="layerTag">Layer: block5_conv4 heat distribution</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW 2: DIAGNOSTIC REPORTS LOG -->
+            <section class="view-section" id="viewReports">
+                <header class="top-header">
+                    <div class="header-titles">
+                        <h1 class="header-title">Diagnostic Analysis Reports</h1>
+                        <p class="header-subtitle">Historical scan predictions, heatmaps, and diagnostic records</p>
+                    </div>
+                    <button type="button" class="btn-secondary" id="btnRefreshReports">
+                        <i class="fa-solid fa-arrows-rotate"></i> Refresh
+                    </button>
+                </header>
+
+                <!-- Reports Summary Stat Cards -->
+                <div class="stats-row">
+                    <div class="stat-card">
+                        <span class="stat-label">TOTAL SCANS ANALYZED</span>
+                        <span class="stat-value" id="statTotalScans">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">TUMOR DETECTED</span>
+                        <span class="stat-value text-red" id="statTumorCount">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">NON-TUMOROUS</span>
+                        <span class="stat-value text-green" id="statNonTumorCount">0</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">AVG CONFIDENCE</span>
+                        <span class="stat-value text-cyan" id="statAvgConfidence">0%</span>
+                    </div>
+                </div>
+
+                <!-- Reports Table Container -->
+                <div class="panel-card">
+                    <div class="panel-header">
+                        <h3 class="panel-title">Recent Analysis Reports</h3>
+                        <div class="search-box">
+                            <i class="fa-solid fa-magnifying-glass search-icon"></i>
+                            <input type="text" id="reportSearchInput" placeholder="Search filename or diagnosis...">
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="reports-table">
+                            <thead>
+                                <tr>
+                                    <th>Report ID</th>
+                                    <th>Scan Filename</th>
+                                    <th>Timestamp</th>
+                                    <th>Diagnosis</th>
+                                    <th>Confidence</th>
+                                    <th>Target Layer</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="reportsTableBody">
+                                <tr class="empty-table-row">
+                                    <td colspan="7">No analysis reports logged yet. Run a scan from the Analysis tab!</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- VIEW 3: SYSTEM & MODEL SETTINGS -->
+            <section class="view-section" id="viewSettings">
+                <header class="top-header">
+                    <div class="header-titles">
+                        <h1 class="header-title">NeuroScan AI Settings</h1>
+                        <p class="header-subtitle">Configure model layer explainability, colormaps, and server hot-reloading</p>
+                    </div>
+                </header>
+
+                <div class="settings-grid">
+                    <!-- Explainability & Grad-CAM Settings -->
+                    <div class="panel-card">
+                        <div class="panel-header">
+                            <h3 class="panel-title"><i class="fa-solid fa-eye text-cyan"></i> Grad-CAM & Explainability Configuration</h3>
+                        </div>
+                        <div class="panel-body">
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label class="setting-label">Grad-CAM Target Layer</label>
+                                    <span class="setting-desc">Select which convolutional layer's activation map to visualize.</span>
+                                </div>
+                                <select id="settingTargetLayer" class="form-select">
+                                    <option value="block5_conv4" selected>block5_conv4 (Recommended - Deep Features)</option>
+                                    <option value="block5_conv3">block5_conv3</option>
+                                    <option value="block5_conv2">block5_conv2</option>
+                                    <option value="block4_conv4">block4_conv4 (Mid-Level Features)</option>
+                                </select>
+                            </div>
+
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label class="setting-label">Heatmap Colormap</label>
+                                    <span class="setting-desc">Color gradient mapping applied to activation intensities.</span>
+                                </div>
+                                <select id="settingColormap" class="form-select">
+                                    <option value="JET" selected>COLORMAP_JET (Standard Spectrum)</option>
+                                    <option value="VIRIDIS">COLORMAP_VIRIDIS (Perceptually Uniform)</option>
+                                    <option value="HOT">COLORMAP_HOT (Thermal Heat)</option>
+                                    <option value="INFERNO">COLORMAP_INFERNO (High Contrast)</option>
+                                </select>
+                            </div>
+
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label class="setting-label">Overlay Transparency (Alpha)</label>
+                                    <span class="setting-desc">Adjust blending opacity between heat map and brain scan.</span>
+                                </div>
+                                <div class="range-wrapper">
+                                    <input type="range" id="settingAlpha" min="0.1" max="0.9" step="0.05" value="0.45">
+                                    <span id="alphaValueDisplay" class="range-val">0.45</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Server Hot-Reloading & Weights Settings -->
+                    <div class="panel-card">
+                        <div class="panel-header">
+                            <h3 class="panel-title"><i class="fa-solid fa-server text-green"></i> Backend Weights & Hot-Reloading</h3>
+                        </div>
+                        <div class="panel-body">
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label class="setting-label">Dynamic Weight Hot-Reloading</label>
+                                    <span class="setting-desc">Automatically detect and load new <code>model.h5</code> weights on disk without server downtime.</span>
+                                </div>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="settingAutoReload" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+
+                            <div class="setting-item">
+                                <div class="setting-info">
+                                    <label class="setting-label">Active Model File</label>
+                                    <span class="setting-desc" id="modelFileDesc">model.h5 (VGG19 Transfer Learning Head)</span>
+                                </div>
+                                <button type="button" class="btn-secondary" id="btnForceReload">
+                                    <i class="fa-solid fa-rotate"></i> Force Reload Weights
+                                </button>
+                            </div>
+
+                            <!-- Model Metrics Panel -->
+                            <div class="metrics-summary-box">
+                                <h4 class="metrics-title">Trained Model Performance Metrics</h4>
+                                <div class="metrics-list">
+                                    <div class="metric-row">
+                                        <span>Training Accuracy:</span>
+                                        <strong class="text-green">95.57%</strong>
+                                    </div>
+                                    <div class="metric-row">
+                                        <span>Validation Accuracy:</span>
+                                        <strong class="text-cyan">93.23%</strong>
+                                    </div>
+                                    <div class="metric-row">
+                                        <span>Test Accuracy:</span>
+                                        <strong class="text-cyan">93.55%</strong>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button type="button" class="btn-primary" id="btnSaveSettings">
+                                <i class="fa-solid fa-floppy-disk"></i> Save Settings
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Report Detail Modal -->
+    <div class="modal-overlay hidden" id="reportModal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 class="modal-title" id="modalTitle">Diagnostic Report Details</h3>
+                <button type="button" class="btn-close-modal" id="btnCloseModal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- Dynamically populated report preview -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Main App JS -->
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

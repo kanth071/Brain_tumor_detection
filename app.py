@@ -1,0 +1,294 @@
+import os
+import time
+import base64
+import threading
+import cv2
+import imutils
+import numpy as np
+import tensorflow as tf
+from flask import Flask, request, jsonify, render_template
+
+app = Flask(__name__, template_folder='templates', static_folder='static')
+
+MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'model.h5')
+IMG_SIZE = (240, 240)
+
+# Global Application Configuration
+app_config = {
+    'target_layer': 'block5_conv4',
+    'colormap': 'JET',
+    'alpha': 0.45,
+    'auto_reload': True
+}
+
+# In-memory Reports History
+reports_history = []
+report_id_counter = 1001
+
+COLORMAP_DICT = {
+    'JET': cv2.COLORMAP_JET,
+    'VIRIDIS': cv2.COLORMAP_VIRIDIS,
+    'HOT': cv2.COLORMAP_HOT,
+    'INFERNO': cv2.COLORMAP_INFERNO,
+    'PLASMA': cv2.COLORMAP_PLASMA
+}
+
+class DynamicModelManager:
+    def __init__(self, model_path):
+        self.model_path = model_path
+        self.model = None
+        self.last_mtime = 0
+        self.lock = threading.Lock()
+        self.load_model_if_updated()
+
+    def load_model_if_updated(self, force=False):
+        if not app_config.get('auto_reload', True) and not force and self.model is not None:
+            return True
+        with self.lock:
+            if not os.path.exists(self.model_path):
+                print(f"[ModelManager] Warning: Model file {self.model_path} not found.")
+                return False
+            current_mtime = os.path.getmtime(self.model_path)
+            if current_mtime > self.last_mtime or self.model is None or force:
+                print(f"[ModelManager] Loading/Hot-reloading weights from {self.model_path} (mtime: {current_mtime})...")
+                try:
+                    loaded_model = tf.keras.models.load_model(self.model_path)
+                    self.model = loaded_model
+                    self.last_mtime = current_mtime
+                    print("[ModelManager] Model weights successfully loaded and ready.")
+                    return True
+                except Exception as e:
+                    print(f"[ModelManager] Error loading model: {e}")
+                    return False
+            return True
+
+    def get_model(self):
+        self.load_model_if_updated()
+        return self.model, self.last_mtime
+
+model_manager = DynamicModelManager(MODEL_PATH)
+
+
+def crop_brain_contour(image):
+    """Crops brain area from MRI scan background to focus ROI."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+    thres = cv2.threshold(gray, 45, 255, cv2.THRESH_BINARY)[1]
+    thres = cv2.erode(thres, None, iterations=2)
+    thres = cv2.dilate(thres, None, iterations=2)
+    cnts = cv2.findContours(thres.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = imutils.grab_contours(cnts)
+    
+    if not cnts:
+        return image
+
+    c = max(cnts, key=cv2.contourArea)
+    extLeft = tuple(c[c[:, :, 0].argmin()][0])
+    extRight = tuple(c[c[:, :, 0].argmax()][0])
+    extTop = tuple(c[c[:, :, 1].argmin()][0])
+    extBot = tuple(c[c[:, :, 1].argmax()][0])
+    
+    cropped = image[extTop[1]:extBot[1], extLeft[0]:extRight[0]]
+    if cropped.size == 0:
+        return image
+    return cropped
+
+
+def compute_gradcam(model, img_tensor, last_conv_layer_name=None, pred_index=None):
+    """Computes Grad-CAM activation heatmap for the target convolutional layer."""
+    if last_conv_layer_name is None:
+        last_conv_layer_name = app_config.get('target_layer', 'block5_conv4')
+
+    try:
+        grad_model = tf.keras.models.Model(
+            inputs=model.input,
+            outputs=[model.get_layer(last_conv_layer_name).output, model.output]
+        )
+    except Exception as e:
+        conv_layers = [l.name for l in model.layers if 'conv' in l.name]
+        last_conv_layer_name = conv_layers[-1] if conv_layers else 'block5_conv4'
+        grad_model = tf.keras.models.Model(
+            inputs=model.input,
+            outputs=[model.get_layer(last_conv_layer_name).output, model.output]
+        )
+
+    with tf.GradientTape() as tape:
+        last_conv_layer_output, preds = grad_model(img_tensor)
+        if pred_index is None:
+            pred_index = tf.argmax(preds[0])
+        class_channel = preds[:, pred_index]
+
+    grads = tape.gradient(class_channel, last_conv_layer_output)
+    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+
+    last_conv_layer_output = last_conv_layer_output[0]
+    heatmap = last_conv_layer_output @ pooled_grads[..., tf.newaxis]
+    heatmap = tf.squeeze(heatmap)
+
+    heatmap = tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-10)
+    return heatmap.numpy(), last_conv_layer_name
+
+
+def generate_gradcam_overlay(original_img_rgb, heatmap, alpha=None, colormap_name=None):
+    """Overlays Grad-CAM heatmap onto the original image using selected colormap."""
+    if alpha is None:
+        alpha = app_config.get('alpha', 0.45)
+    if colormap_name is None:
+        colormap_name = app_config.get('colormap', 'JET')
+
+    cv2_colormap = COLORMAP_DICT.get(colormap_name.upper(), cv2.COLORMAP_JET)
+
+    heatmap_resized = cv2.resize(heatmap, (original_img_rgb.shape[1], original_img_rgb.shape[0]))
+    heatmap_uint8 = np.uint8(255 * heatmap_resized)
+    
+    colored_heatmap = cv2.applyColorMap(heatmap_uint8, cv2_colormap)
+    colored_heatmap = cv2.cvtColor(colored_heatmap, cv2.COLOR_BGR2RGB)
+    
+    overlay = (colored_heatmap * alpha + original_img_rgb * (1.0 - alpha)).astype(np.uint8)
+    return overlay
+
+
+def image_to_base64(img_rgb):
+    """Encodes RGB image array to PNG base64 string."""
+    img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
+    _, buffer = cv2.imencode('.png', img_bgr)
+    return 'data:image/png;base64,' + base64.b64encode(buffer).decode('utf-8')
+
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+
+@app.route('/api/status', methods=['GET'])
+def get_status():
+    model, mtime = model_manager.get_model()
+    is_loaded = model is not None
+    mtime_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mtime)) if mtime > 0 else 'N/A'
+    return jsonify({
+        'status': 'ready' if is_loaded else 'error',
+        'model_loaded': is_loaded,
+        'model_filename': 'model.h5',
+        'last_weight_reload': mtime_str,
+        'target_layer': app_config['target_layer'],
+        'colormap': app_config['colormap'],
+        'alpha': app_config['alpha'],
+        'auto_reload': app_config['auto_reload'],
+        'metrics': {
+            'train_accuracy': '95.57%',
+            'validation_accuracy': '93.23%',
+            'test_accuracy': '93.55%'
+        }
+    })
+
+
+@app.route('/api/settings', methods=['GET', 'POST'])
+def handle_settings():
+    global app_config
+    if request.method == 'POST':
+        data = request.json or {}
+        if 'target_layer' in data:
+            app_config['target_layer'] = data['target_layer']
+        if 'colormap' in data:
+            app_config['colormap'] = data['colormap']
+        if 'alpha' in data:
+            app_config['alpha'] = float(data['alpha'])
+        if 'auto_reload' in data:
+            app_config['auto_reload'] = bool(data['auto_reload'])
+
+        # Force model reload if requested
+        if data.get('force_reload'):
+            model_manager.load_model_if_updated(force=True)
+
+        return jsonify({'success': True, 'config': app_config})
+    
+    return jsonify({'success': True, 'config': app_config})
+
+
+@app.route('/api/reports', methods=['GET'])
+def get_reports():
+    return jsonify({'success': True, 'reports': reports_history})
+
+
+@app.route('/api/analyze', methods=['POST'])
+def analyze():
+    global report_id_counter, reports_history
+    if 'file' not in request.files:
+        return jsonify({'error': 'No image file uploaded.'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file.'}), 400
+
+    model, _ = model_manager.get_model()
+    if model is None:
+        return jsonify({'error': 'Model weights not loaded on server.'}), 500
+
+    try:
+        # Read uploaded image bytes
+        file_bytes = np.frombuffer(file.read(), np.uint8)
+        img_raw = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        if img_raw is None:
+            return jsonify({'error': 'Failed to decode image format.'}), 400
+
+        # Crop brain contour & resize
+        cropped_bgr = crop_brain_contour(img_raw)
+        resized_bgr = cv2.resize(cropped_bgr, IMG_SIZE, interpolation=cv2.INTER_CUBIC)
+        img_rgb = cv2.cvtColor(resized_bgr, cv2.COLOR_BGR2RGB)
+
+        # Normalize for model prediction (1./255)
+        input_tensor = np.expand_dims(img_rgb / 255.0, axis=0)
+
+        # Run inference
+        preds = model.predict(input_tensor)[0]
+        pred_class_idx = int(np.argmax(preds))
+        confidence = float(preds[pred_class_idx])
+
+        # Class labels
+        class_labels = {0: 'Non-Tumorous', 1: 'Tumorous'}
+        predicted_label = class_labels.get(pred_class_idx, 'Unknown')
+
+        # Generate Grad-CAM Heatmap
+        heatmap, used_layer = compute_gradcam(model, input_tensor, pred_index=pred_class_idx)
+        gradcam_overlay = generate_gradcam_overlay(img_rgb, heatmap)
+
+        # Convert images to base64
+        original_b64 = image_to_base64(img_rgb)
+        gradcam_b64 = image_to_base64(gradcam_overlay)
+
+        # Record Report Entry
+        timestamp_str = time.strftime('%Y-%m-%d %H:%M:%S')
+        report_entry = {
+            'report_id': f"REP-{report_id_counter}",
+            'filename': file.filename,
+            'timestamp': timestamp_str,
+            'prediction': predicted_label,
+            'confidence': round(confidence * 100, 2),
+            'target_layer': used_layer,
+            'original_image': original_b64,
+            'gradcam_image': gradcam_b64
+        }
+        report_id_counter += 1
+        reports_history.insert(0, report_entry)  # Latest first
+
+        return jsonify({
+            'success': True,
+            'report_id': report_entry['report_id'],
+            'filename': file.filename,
+            'prediction': predicted_label,
+            'class_index': pred_class_idx,
+            'confidence': round(confidence * 100, 2),
+            'raw_scores': [float(p) for p in preds],
+            'target_layer': f"Layer: {used_layer} heat distribution",
+            'original_image': original_b64,
+            'gradcam_image': gradcam_b64
+        })
+
+    except Exception as e:
+        print(f"[Analyze Error] {e}")
+        return jsonify({'error': f'Analysis failed: {str(e)}'}), 500
+
+
+if __name__ == '__main__':
+    print("Starting NeuroScan AI Flask Backend on http://127.0.0.1:5000...")
+    app.run(host='0.0.0.0', port=5000, debug=True)
