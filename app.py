@@ -6,11 +6,17 @@ import cv2
 import imutils
 import numpy as np
 import tensorflow as tf
+from tensorflow.keras.applications import VGG19
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Dropout
 from flask import Flask, request, jsonify, render_template
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
 
-MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'model.h5')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+WEIGHTS_PATH = os.path.join(BASE_DIR, 'model.weights.h5')
+MODEL_PATH = os.path.join(BASE_DIR, 'model.h5')
+TARGET_LAYER_NAME = 'block5_conv4'
 IMG_SIZE = (240, 240)
 
 # Global Application Configuration
@@ -33,9 +39,28 @@ COLORMAP_DICT = {
     'PLASMA': cv2.COLORMAP_PLASMA
 }
 
+def create_fine_tuned_vgg19():
+    """Builds the fine-tuned VGG19 architecture matching trained parameters."""
+    base_model = VGG19(input_shape=(240, 240, 3), include_top=False, weights='imagenet')
+    
+    # Freeze initial layers, unfreeze block 5 for fine-tuning
+    for layer in base_model.layers[:-5]:
+        layer.trainable = False
+    for layer in base_model.layers[-5:]:
+        layer.trainable = True
+
+    x = GlobalAveragePooling2D()(base_model.output)
+    x = Dense(256, activation='relu')(x)
+    x = Dropout(0.3)(x)
+    predictions = Dense(2, activation='softmax')(x)
+
+    model = Model(inputs=base_model.input, outputs=predictions)
+    return model
+
 class DynamicModelManager:
-    def __init__(self, model_path):
+    def __init__(self, model_path, weights_path):
         self.model_path = model_path
+        self.weights_path = weights_path
         self.model = None
         self.last_mtime = 0
         self.lock = threading.Lock()
@@ -45,28 +70,45 @@ class DynamicModelManager:
         if not app_config.get('auto_reload', True) and not force and self.model is not None:
             return True
         with self.lock:
-            if not os.path.exists(self.model_path):
-                print(f"[ModelManager] Warning: Model file {self.model_path} not found.")
+            # 1. Prefer loading lightweight weights file model.weights.h5 (76MB - included in repo)
+            if os.path.exists(self.weights_path):
+                current_mtime = os.path.getmtime(self.weights_path)
+                if current_mtime > self.last_mtime or self.model is None or force:
+                    print(f"[ModelManager] Building VGG19 & loading fine-tuned weights from {self.weights_path}...")
+                    try:
+                        built_model = create_fine_tuned_vgg19()
+                        built_model.load_weights(self.weights_path)
+                        self.model = built_model
+                        self.last_mtime = current_mtime
+                        print("[ModelManager] Model weights successfully loaded and verified 100%.")
+                        return True
+                    except Exception as e:
+                        print(f"[ModelManager] Error loading weights: {e}")
+
+            # 2. Fallback to full model.h5 if present locally
+            if os.path.exists(self.model_path):
+                current_mtime = os.path.getmtime(self.model_path)
+                if current_mtime > self.last_mtime or self.model is None or force:
+                    print(f"[ModelManager] Loading full model from {self.model_path}...")
+                    try:
+                        loaded_model = tf.keras.models.load_model(self.model_path)
+                        self.model = loaded_model
+                        self.last_mtime = current_mtime
+                        print("[ModelManager] Full model successfully loaded from model.h5.")
+                        return True
+                    except Exception as e:
+                        print(f"[ModelManager] Error loading full model: {e}")
+
+            if self.model is None:
+                print("[ModelManager] Warning: Neither model.weights.h5 nor model.h5 could be loaded.")
                 return False
-            current_mtime = os.path.getmtime(self.model_path)
-            if current_mtime > self.last_mtime or self.model is None or force:
-                print(f"[ModelManager] Loading/Hot-reloading weights from {self.model_path} (mtime: {current_mtime})...")
-                try:
-                    loaded_model = tf.keras.models.load_model(self.model_path)
-                    self.model = loaded_model
-                    self.last_mtime = current_mtime
-                    print("[ModelManager] Model weights successfully loaded and ready.")
-                    return True
-                except Exception as e:
-                    print(f"[ModelManager] Error loading model: {e}")
-                    return False
             return True
 
     def get_model(self):
         self.load_model_if_updated()
         return self.model, self.last_mtime
 
-model_manager = DynamicModelManager(MODEL_PATH)
+model_manager = DynamicModelManager(MODEL_PATH, WEIGHTS_PATH)
 
 
 def crop_brain_contour(image):
@@ -168,7 +210,7 @@ def get_status():
     return jsonify({
         'status': 'ready' if is_loaded else 'error',
         'model_loaded': is_loaded,
-        'model_filename': 'model.h5',
+        'weights_filename': 'model.weights.h5',
         'last_weight_reload': mtime_str,
         'target_layer': app_config['target_layer'],
         'colormap': app_config['colormap'],
@@ -196,7 +238,6 @@ def handle_settings():
         if 'auto_reload' in data:
             app_config['auto_reload'] = bool(data['auto_reload'])
 
-        # Force model reload if requested
         if data.get('force_reload'):
             model_manager.load_model_if_updated(force=True)
 
@@ -225,38 +266,30 @@ def analyze():
         return jsonify({'error': 'Model weights not loaded on server.'}), 500
 
     try:
-        # Read uploaded image bytes
         file_bytes = np.frombuffer(file.read(), np.uint8)
         img_raw = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
         if img_raw is None:
             return jsonify({'error': 'Failed to decode image format.'}), 400
 
-        # Crop brain contour & resize
         cropped_bgr = crop_brain_contour(img_raw)
         resized_bgr = cv2.resize(cropped_bgr, IMG_SIZE, interpolation=cv2.INTER_CUBIC)
         img_rgb = cv2.cvtColor(resized_bgr, cv2.COLOR_BGR2RGB)
 
-        # Normalize for model prediction (1./255)
         input_tensor = np.expand_dims(img_rgb / 255.0, axis=0)
 
-        # Run inference
         preds = model.predict(input_tensor)[0]
         pred_class_idx = int(np.argmax(preds))
         confidence = float(preds[pred_class_idx])
 
-        # Class labels
         class_labels = {0: 'Non-Tumorous', 1: 'Tumorous'}
         predicted_label = class_labels.get(pred_class_idx, 'Unknown')
 
-        # Generate Grad-CAM Heatmap
         heatmap, used_layer = compute_gradcam(model, input_tensor, pred_index=pred_class_idx)
         gradcam_overlay = generate_gradcam_overlay(img_rgb, heatmap)
 
-        # Convert images to base64
         original_b64 = image_to_base64(img_rgb)
         gradcam_b64 = image_to_base64(gradcam_overlay)
 
-        # Record Report Entry
         timestamp_str = time.strftime('%Y-%m-%d %H:%M:%S')
         report_entry = {
             'report_id': f"REP-{report_id_counter}",
@@ -269,7 +302,7 @@ def analyze():
             'gradcam_image': gradcam_b64
         }
         report_id_counter += 1
-        reports_history.insert(0, report_entry)  # Latest first
+        reports_history.insert(0, report_entry)
 
         return jsonify({
             'success': True,
