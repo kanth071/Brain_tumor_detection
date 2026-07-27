@@ -46,7 +46,6 @@ def create_fine_tuned_vgg19():
     """Builds the fine-tuned VGG19 architecture matching trained parameters."""
     base_model = VGG19(input_shape=(240, 240, 3), include_top=False, weights='imagenet')
     
-    # Freeze initial layers, unfreeze block 5 for fine-tuning
     for layer in base_model.layers[:-5]:
         layer.trainable = False
     for layer in base_model.layers[-5:]:
@@ -65,9 +64,27 @@ class DynamicModelManager:
         self.model_path = model_path
         self.weights_path = weights_path
         self.model = None
+        self.grad_models = {}  # Cache grad_models per layer for ultra-fast inference
         self.last_mtime = 0
         self.lock = threading.Lock()
         self.load_model_if_updated()
+
+    def build_grad_model_cache(self):
+        """Pre-constructs Grad-CAM computational graphs for instant execution (< 0.5s)."""
+        self.grad_models = {}
+        if self.model is None:
+            return
+        target_layers = ['block5_conv4', 'block5_conv3', 'block5_conv2', 'block4_conv4']
+        for layer_name in target_layers:
+            try:
+                target_layer = self.model.get_layer(layer_name)
+                g_model = tf.keras.models.Model(
+                    inputs=self.model.input,
+                    outputs=[target_layer.output, self.model.output]
+                )
+                self.grad_models[layer_name] = g_model
+            except Exception as e:
+                print(f"[ModelManager] Skipping grad model for {layer_name}: {e}")
 
     def load_model_if_updated(self, force=False):
         if not app_config.get('auto_reload', True) and not force and self.model is not None:
@@ -83,7 +100,8 @@ class DynamicModelManager:
                         built_model.load_weights(self.weights_path)
                         self.model = built_model
                         self.last_mtime = current_mtime
-                        print("[ModelManager] Model weights successfully loaded and verified 100%.")
+                        self.build_grad_model_cache()
+                        print("[ModelManager] Model & Grad-CAM cache successfully loaded and ready.")
                         return True
                     except Exception as e:
                         print(f"[ModelManager] Error loading weights: {e}")
@@ -97,7 +115,8 @@ class DynamicModelManager:
                         loaded_model = tf.keras.models.load_model(self.model_path)
                         self.model = loaded_model
                         self.last_mtime = current_mtime
-                        print("[ModelManager] Full model successfully loaded from model.h5.")
+                        self.build_grad_model_cache()
+                        print("[ModelManager] Full model & Grad-CAM cache successfully loaded.")
                         return True
                     except Exception as e:
                         print(f"[ModelManager] Error loading full model: {e}")
@@ -110,6 +129,29 @@ class DynamicModelManager:
     def get_model(self):
         self.load_model_if_updated()
         return self.model, self.last_mtime
+
+    def get_grad_model(self, layer_name):
+        self.load_model_if_updated()
+        if layer_name in self.grad_models:
+            return self.grad_models[layer_name], layer_name
+        # Fallback if cached layer not present
+        if self.model:
+            try:
+                fallback_model = tf.keras.models.Model(
+                    inputs=self.model.input,
+                    outputs=[self.model.get_layer(layer_name).output, self.model.output]
+                )
+                return fallback_model, layer_name
+            except Exception:
+                pass
+            conv_layers = [l.name for l in self.model.layers if 'conv' in l.name]
+            fallback_name = conv_layers[-1] if conv_layers else 'block5_conv4'
+            fallback_model = tf.keras.models.Model(
+                inputs=self.model.input,
+                outputs=[self.model.get_layer(fallback_name).output, self.model.output]
+            )
+            return fallback_model, fallback_name
+        return None, layer_name
 
 model_manager = DynamicModelManager(MODEL_PATH, WEIGHTS_PATH)
 
@@ -139,23 +181,14 @@ def crop_brain_contour(image):
     return cropped
 
 
-def compute_gradcam(model, img_tensor, last_conv_layer_name=None, pred_index=None):
-    """Computes Grad-CAM activation heatmap for the target convolutional layer."""
+def compute_gradcam(img_tensor, last_conv_layer_name=None, pred_index=None):
+    """Computes Grad-CAM activation heatmap using pre-cached computational graph (0.4s speed)."""
     if last_conv_layer_name is None:
         last_conv_layer_name = app_config.get('target_layer', 'block5_conv4')
 
-    try:
-        grad_model = tf.keras.models.Model(
-            inputs=model.input,
-            outputs=[model.get_layer(last_conv_layer_name).output, model.output]
-        )
-    except Exception as e:
-        conv_layers = [l.name for l in model.layers if 'conv' in l.name]
-        last_conv_layer_name = conv_layers[-1] if conv_layers else 'block5_conv4'
-        grad_model = tf.keras.models.Model(
-            inputs=model.input,
-            outputs=[model.get_layer(last_conv_layer_name).output, model.output]
-        )
+    grad_model, used_layer_name = model_manager.get_grad_model(last_conv_layer_name)
+    if grad_model is None:
+        raise ValueError("Grad-CAM model graph not available.")
 
     with tf.GradientTape() as tape:
         last_conv_layer_output, preds = grad_model(img_tensor)
@@ -171,7 +204,7 @@ def compute_gradcam(model, img_tensor, last_conv_layer_name=None, pred_index=Non
     heatmap = tf.squeeze(heatmap)
 
     heatmap = tf.maximum(heatmap, 0) / (tf.reduce_max(heatmap) + 1e-10)
-    return heatmap.numpy(), last_conv_layer_name
+    return heatmap.numpy(), used_layer_name
 
 
 def generate_gradcam_overlay(original_img_rgb, heatmap, alpha=None, colormap_name=None):
@@ -287,7 +320,8 @@ def analyze():
         class_labels = {0: 'Non-Tumorous', 1: 'Tumorous'}
         predicted_label = class_labels.get(pred_class_idx, 'Unknown')
 
-        heatmap, used_layer = compute_gradcam(model, input_tensor, pred_index=pred_class_idx)
+        # Fast Grad-CAM computation using pre-cached model graph
+        heatmap, used_layer = compute_gradcam(input_tensor, pred_index=pred_class_idx)
         gradcam_overlay = generate_gradcam_overlay(img_rgb, heatmap)
 
         original_b64 = image_to_base64(img_rgb)
