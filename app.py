@@ -378,7 +378,49 @@ def analyze():
         return jsonify({'error': f'Analysis failed: {str(e)}'}), 500
 
 
+import gradio as gr
+
+def predict_gradio(image):
+    if image is None:
+        return "Please upload an MRI image scan.", None
+    model, _ = model_manager.get_model()
+    if model is None:
+        return "Model weights not loaded.", None
+
+    try:
+        img_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        cropped_bgr = crop_brain_contour(img_bgr)
+        resized_bgr = cv2.resize(cropped_bgr, IMG_SIZE, interpolation=cv2.INTER_CUBIC)
+        img_rgb = cv2.cvtColor(resized_bgr, cv2.COLOR_BGR2RGB)
+
+        input_tensor = np.expand_dims(img_rgb / 255.0, axis=0)
+        preds = model.predict(input_tensor)[0]
+        pred_class_idx = int(np.argmax(preds))
+        confidence = float(preds[pred_class_idx])
+
+        class_labels = {0: 'Non-Tumorous', 1: 'Tumorous'}
+        predicted_label = class_labels.get(pred_class_idx, 'Unknown')
+
+        heatmap, used_layer = compute_gradcam(input_tensor, pred_index=pred_class_idx)
+        gradcam_overlay = generate_gradcam_overlay(img_rgb, heatmap)
+
+        summary_text = f"Diagnosis: {predicted_label}\nConfidence: {confidence * 100:.2f}%\nTarget Layer: Layer: {used_layer} heat distribution"
+        return summary_text, gradcam_overlay
+    except Exception as e:
+        return f"Error: {str(e)}", None
+
+demo = gr.Interface(
+    fn=predict_gradio,
+    inputs=gr.Image(type="numpy", label="Upload Brain MRI Scan"),
+    outputs=[
+        gr.Textbox(label="Diagnostic Output"),
+        gr.Image(type="numpy", label="Grad-CAM Neural Heatmap Overlay")
+    ],
+    title="NeuroScan AI - Brain Tumor Classification & Neural Explainability",
+    description="Fine-tuned VGG-19 Deep Learning Model with Grad-CAM Activation Heatmaps (95.57% Train / 93.55% Test Accuracy)."
+)
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 7860))
-    print(f"Starting NeuroScan AI Flask Backend on port {port}...")
-    app.run(host='0.0.0.0', port=port, debug=False)
+    print(f"Starting NeuroScan AI on port {port}...")
+    demo.launch(server_name="0.0.0.0", server_port=port)

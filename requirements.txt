@@ -5,3 +5,4 @@ numpy>=1.24.0,<2.0.0
 imutils>=0.5.4
 requests>=2.31.0
 gunicorn>=21.2.0
+gradio>=4.0.0
