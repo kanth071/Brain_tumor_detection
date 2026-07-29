@@ -1,3 +1,13 @@
+---
+title: NeuroScan AI - Brain Tumor Detection
+emoji: 🧠
+colorFrom: cyan
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # 🧠 NeuroScan AI - Brain Tumor Detection & Neural Explainability
 
 **NeuroScan AI** is an end-to-end deep learning web application for brain tumor classification from MRI scans. It features a fine-tuned **VGG-19** model, **Grad-CAM (Gradient-Weighted Class Activation Mapping)** visualization for explainable AI, and a modern dark-themed medical dashboard.
