@@ -1,13 +1,4 @@
----
-title: NeuroScan AI - Brain Tumor Detection
-emoji: 🧠
-colorFrom: cyan
-colorTo: blue
-sdk: gradio
-sdk_version: 6.8.0
-app_file: app.py
-pinned: false
----
+
 
 # 🧠 NeuroScan AI - Brain Tumor Detection & Neural Explainability
 
