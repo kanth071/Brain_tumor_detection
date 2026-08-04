@@ -427,21 +427,22 @@ def predict_gradio(image):
     except Exception as e:
         return f"Error: {str(e)}", None
 
-demo = gr.Interface(
-    fn=predict_gradio,
-    inputs=gr.Image(type="numpy", label="Upload Brain MRI Scan"),
-    outputs=[
-        gr.Textbox(label="Diagnostic Output"),
-        gr.Image(type="numpy", label="Grad-CAM Neural Heatmap Overlay")
-    ],
-    title="NeuroScan AI - Brain Tumor Classification & Neural Explainability",
-    description="Fine-tuned VGG-19 Deep Learning Model with Grad-CAM Activation Heatmaps (95.57% Train / 93.55% Test Accuracy)."
-)
+# Build robust Gradio Blocks UI (avoids OpenAPI schema and localhost proxy bugs)
+with gr.Blocks(title="NeuroScan AI - Brain Tumor Classification") as demo:
+    gr.Markdown("# 🧠 NeuroScan AI - Brain Tumor Classification & Neural Explainability")
+    gr.Markdown("Fine-tuned VGG-19 Deep Learning Model with Grad-CAM Activation Heatmaps (95.57% Train / 93.55% Test Accuracy).")
+    
+    with gr.Row():
+        with gr.Column():
+            input_img = gr.Image(label="Upload Brain MRI Scan")
+            btn = gr.Button("Analyze MRI Scan", variant="primary")
+        with gr.Column():
+            output_txt = gr.Textbox(label="Diagnostic Output")
+            output_img = gr.Image(label="Grad-CAM Neural Heatmap Overlay")
+            
+    btn.click(fn=predict_gradio, inputs=input_img, outputs=[output_txt, output_img])
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 7860))
     print(f"Starting NeuroScan AI on port {port}...")
-    try:
-        demo.launch(server_name="0.0.0.0", server_port=port, ssr_mode=False)
-    except TypeError:
-        demo.launch(server_name="0.0.0.0", server_port=port)
+    demo.launch(server_name="0.0.0.0", server_port=port)
