@@ -5,6 +5,7 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 import time
 import base64
 import threading
+import urllib.request
 import cv2
 import imutils
 import numpy as np
@@ -22,6 +23,7 @@ WEIGHTS_PATH = os.path.join(BASE_DIR, 'model.weights.h5')
 MODEL_PATH = os.path.join(BASE_DIR, 'model.h5')
 TARGET_LAYER_NAME = 'block5_conv4'
 IMG_SIZE = (240, 240)
+RAW_GITHUB_WEIGHTS_URL = "https://github.com/kanth071/Brain_tumor_detection/raw/master/model_weights.npz"
 
 # Global Application Configuration
 app_config = {
@@ -42,6 +44,16 @@ COLORMAP_DICT = {
     'INFERNO': cv2.COLORMAP_INFERNO,
     'PLASMA': cv2.COLORMAP_PLASMA
 }
+
+def ensure_weights_file(npz_path):
+    """Ensures real binary weights exist. Auto-downloads from GitHub if missing or Git LFS pointer (<1MB)."""
+    if not os.path.exists(npz_path) or os.path.getsize(npz_path) < 1000000:
+        print(f"[ModelManager] Local weights missing or Git LFS pointer detected. Auto-downloading real model_weights.npz from GitHub...")
+        try:
+            urllib.request.urlretrieve(RAW_GITHUB_WEIGHTS_URL, npz_path)
+            print(f"[ModelManager] Weights download complete! File size: {os.path.getsize(npz_path)/(1024*1024):.2f} MB")
+        except Exception as e:
+            print(f"[ModelManager] Failed to download weights from GitHub: {e}")
 
 def create_fine_tuned_vgg19():
     """Builds the fine-tuned VGG19 architecture matching trained parameters."""
@@ -92,8 +104,11 @@ class DynamicModelManager:
         if not app_config.get('auto_reload', True) and not force and self.model is not None:
             return True
         with self.lock:
-            # 1. Prefer portable NumPy compressed weights file model_weights.npz (71MB - 100% version independent)
-            if os.path.exists(self.npz_path):
+            # 0. Ensure real binary weights exist (downloads if LFS pointer)
+            ensure_weights_file(self.npz_path)
+
+            # 1. Prefer portable NumPy compressed weights file model_weights.npz
+            if os.path.exists(self.npz_path) and os.path.getsize(self.npz_path) > 1000000:
                 current_mtime = os.path.getmtime(self.npz_path)
                 if current_mtime > self.last_mtime or self.model is None or force:
                     print(f"[ModelManager] Loading fine-tuned weights from {self.npz_path}...")
@@ -385,7 +400,7 @@ def predict_gradio(image):
         return "Please upload an MRI image scan.", None
     model, _ = model_manager.get_model()
     if model is None:
-        return "Model weights not loaded.", None
+        return "Model weights not loaded on server.", None
 
     try:
         img_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
