@@ -11,6 +11,7 @@ import cv2
 import imutils
 import numpy as np
 import tensorflow as tf
+import gradio as gr
 from tensorflow.keras.applications import VGG19
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Dropout
@@ -121,7 +122,7 @@ class DynamicModelManager:
                         self.model = built_model
                         self.last_mtime = current_mtime
                         self.build_grad_model_cache()
-                        gc.collect()  # Optimize RAM garbage collection
+                        gc.collect()
                         print("[ModelManager] Model & Grad-CAM cache successfully loaded from model_weights.npz.")
                         return True
                     except Exception as e:
@@ -396,8 +397,6 @@ def analyze():
         print(f"[Analyze Error] {e}")
         return jsonify({'error': f'Analysis failed: {str(e)}'}), 500
 
-
-import gradio as gr
 
 def predict_gradio(image):
     if image is None:
