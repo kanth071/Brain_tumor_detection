@@ -57,7 +57,7 @@ def ensure_weights_file(npz_path):
 
 def create_fine_tuned_vgg19():
     """Builds the fine-tuned VGG19 architecture matching trained parameters."""
-    base_model = VGG19(input_shape=(240, 240, 3), include_top=False, weights='imagenet')
+    base_model = VGG19(input_shape=(240, 240, 3), include_top=False, weights=None)
     
     for layer in base_model.layers[:-5]:
         layer.trainable = False
