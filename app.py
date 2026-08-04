@@ -2,6 +2,7 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
+import gc
 import time
 import base64
 import threading
@@ -120,6 +121,7 @@ class DynamicModelManager:
                         self.model = built_model
                         self.last_mtime = current_mtime
                         self.build_grad_model_cache()
+                        gc.collect()  # Optimize RAM garbage collection
                         print("[ModelManager] Model & Grad-CAM cache successfully loaded from model_weights.npz.")
                         return True
                     except Exception as e:
@@ -136,6 +138,7 @@ class DynamicModelManager:
                         self.model = built_model
                         self.last_mtime = current_mtime
                         self.build_grad_model_cache()
+                        gc.collect()
                         print("[ModelManager] Model & Grad-CAM cache successfully loaded from model.weights.h5.")
                         return True
                     except Exception as e:
@@ -151,6 +154,7 @@ class DynamicModelManager:
                         self.model = loaded_model
                         self.last_mtime = current_mtime
                         self.build_grad_model_cache()
+                        gc.collect()
                         print("[ModelManager] Full model successfully loaded from model.h5.")
                         return True
                     except Exception as e:
@@ -438,4 +442,7 @@ demo = gr.Interface(
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 7860))
     print(f"Starting NeuroScan AI on port {port}...")
-    demo.launch(server_name="0.0.0.0", server_port=port)
+    try:
+        demo.launch(server_name="0.0.0.0", server_port=port, ssr_mode=False)
+    except TypeError:
+        demo.launch(server_name="0.0.0.0", server_port=port)
