@@ -443,6 +443,5 @@ with gr.Blocks(title="NeuroScan AI - Brain Tumor Classification") as demo:
     btn.click(fn=predict_gradio, inputs=input_img, outputs=[output_txt, output_img])
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 7860))
-    print(f"Starting NeuroScan AI on port {port}...")
-    demo.launch(server_name="0.0.0.0", server_port=port)
+    print("Starting NeuroScan AI on Hugging Face Spaces...")
+    demo.launch()
