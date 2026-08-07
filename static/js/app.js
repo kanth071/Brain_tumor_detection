@@ -220,6 +220,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    function isTumorClass(prediction) {
+        if (!prediction) return false;
+        const lower = prediction.toLowerCase();
+        return lower.includes('tumorous') && !lower.includes('non');
+    }
+
     function renderResults(data) {
         diagnosticEmptyState.classList.add('hidden');
         diagnosticResults.classList.remove('hidden');
@@ -227,7 +233,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const confidence = data.confidence;
         predictionClass.textContent = data.prediction;
 
-        if (data.prediction.toLowerCase().includes('tumor')) {
+        if (isTumorClass(data.prediction)) {
             predictionClass.style.color = '#ef4444';
             gaugeFill.style.stroke = '#ef4444';
         } else {
@@ -300,7 +306,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         reportsTableBody.innerHTML = reports.map(r => {
-            const isTumor = r.prediction.toLowerCase().includes('tumor');
+            const isTumor = isTumorClass(r.prediction);
             const badgeClass = isTumor ? 'badge-tag tumor' : 'badge-tag non-tumor';
             return `
                 <tr>
@@ -326,7 +332,7 @@ document.addEventListener('DOMContentLoaded', () => {
         let totalConfidence = 0;
 
         reports.forEach(r => {
-            if (r.prediction.toLowerCase().includes('tumor')) tumorCount++;
+            if (isTumorClass(r.prediction)) tumorCount++;
             else nonTumorCount++;
             totalConfidence += r.confidence;
         });
