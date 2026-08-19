@@ -6,7 +6,7 @@ emoji: 🧠
 colorFrom: cyan
 colorTo: blue
 sdk: gradio
-sdk_version: 5.12.0
+sdk_version: 6.22.0
 app_file: app.py
 pinned: false
 ---
@@ -34,7 +34,7 @@ pinned: false
 
 ## ✨ Features
 
-- ⚡ **Dynamic Model Hot-Reloading**: Flask backend monitors `model.h5` modification timestamp on disk and hot-reloads model weights seamlessly without server downtime.
+- ⚡ **Dynamic Model Hot-Reloading**: The app monitors `model.h5` modification timestamp on disk and hot-reloads model weights seamlessly without server downtime.
 - 🎯 **Grad-CAM Visual Heatmaps**: Generates neural activation heatmaps from `block5_conv4` overlaid onto brain MRI scans using OpenCV JET colormaps.
 - 🎨 **Modern Medical Dashboard**: 
   - **Analysis Tab**: Drag-and-drop MRI scan loading, preview, SVG confidence gauge ring, and Grad-CAM heatmap visualization.
@@ -47,7 +47,7 @@ pinned: false
 
 ```
 Brain Tumor/
-├── app.py                      # Flask Server with Grad-CAM & Weight Hot-Reloading
+├── app.py                      # Gradio Space app with Grad-CAM & weight hot-reloading
 ├── brain_tumor_dataset/        # Training script (train_brain_tumor.py)
 ├── templates/
 │   └── index.html              # NeuroScan AI Dashboard UI
@@ -65,13 +65,13 @@ Brain Tumor/
 ## 🚀 How to Run Locally
 
 ### 1. Prerequisites
-Ensure Python 3.10+ and TensorFlow are installed:
+Ensure Python 3.11 and the project dependencies are installed:
 ```bash
-pip install tensorflow opencv-python flask numpy matplotlib imutils requests
+pip install -r requirements.txt
 ```
 
-### 2. Launch Backend Application
-Run the Flask backend server:
+### 2. Launch the App
+Run the Gradio app locally:
 ```bash
 python app.py
 ```
@@ -79,6 +79,16 @@ python app.py
 ### 3. Open Dashboard
 Open your browser and navigate to:
 ```
-http://127.0.0.1:5000
+http://127.0.0.1:7860
 ```
 Upload any brain MRI scan (JPG/PNG) to analyze and visualize Grad-CAM activation heatmaps!
+
+---
+
+## Deploy on Hugging Face Spaces
+
+1. Create a new Space and choose the Gradio SDK.
+2. Upload this repo as-is, including `app.py`, `requirements.txt`, and the model weight files.
+3. Keep `sdk_version` aligned with `requirements.txt` so the Space builds the same Gradio stack locally and in the cloud.
+4. If you ever replace the weights, make sure `model_weights.npz` stays a real file and not a Git LFS pointer.
+5. The pinned requirements file is intentionally minimal so Spaces has fewer version combinations to resolve.

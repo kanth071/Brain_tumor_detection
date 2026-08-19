@@ -1,21 +1,21 @@
+from flask import Flask, request, jsonify, render_template
+from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Dropout
+from tensorflow.keras.models import Model
+from tensorflow.keras.applications import VGG19
+import gradio as gr
+import tensorflow as tf
+import numpy as np
+import imutils
+import cv2
+import urllib.request
+import threading
+import base64
+import time
+import gc
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
-import gc
-import time
-import base64
-import threading
-import urllib.request
-import cv2
-import imutils
-import numpy as np
-import tensorflow as tf
-import gradio as gr
-from tensorflow.keras.applications import VGG19
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Dropout
-from flask import Flask, request, jsonify, render_template
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
 
@@ -47,20 +47,25 @@ COLORMAP_DICT = {
     'PLASMA': cv2.COLORMAP_PLASMA
 }
 
+
 def ensure_weights_file(npz_path):
     """Ensures real binary weights exist. Auto-downloads from GitHub if missing or Git LFS pointer (<1MB)."""
     if not os.path.exists(npz_path) or os.path.getsize(npz_path) < 1000000:
         print(f"[ModelManager] Local weights missing or Git LFS pointer detected. Auto-downloading real model_weights.npz from GitHub...")
         try:
             urllib.request.urlretrieve(RAW_GITHUB_WEIGHTS_URL, npz_path)
-            print(f"[ModelManager] Weights download complete! File size: {os.path.getsize(npz_path)/(1024*1024):.2f} MB")
+            print(
+                f"[ModelManager] Weights download complete! File size: {os.path.getsize(npz_path)/(1024*1024):.2f} MB")
         except Exception as e:
-            print(f"[ModelManager] Failed to download weights from GitHub: {e}")
+            print(
+                f"[ModelManager] Failed to download weights from GitHub: {e}")
+
 
 def create_fine_tuned_vgg19():
     """Builds the fine-tuned VGG19 architecture matching trained parameters."""
-    base_model = VGG19(input_shape=(240, 240, 3), include_top=False, weights=None)
-    
+    base_model = VGG19(input_shape=(240, 240, 3),
+                       include_top=False, weights=None)
+
     for layer in base_model.layers[:-5]:
         layer.trainable = False
     for layer in base_model.layers[-5:]:
@@ -73,6 +78,7 @@ def create_fine_tuned_vgg19():
 
     model = Model(inputs=base_model.input, outputs=predictions)
     return model
+
 
 class DynamicModelManager:
     def __init__(self, model_path, weights_path, npz_path):
@@ -90,7 +96,8 @@ class DynamicModelManager:
         self.grad_models = {}
         if self.model is None:
             return
-        target_layers = ['block5_conv4', 'block5_conv3', 'block5_conv2', 'block4_conv4']
+        target_layers = ['block5_conv4', 'block5_conv3',
+                         'block5_conv2', 'block4_conv4']
         for layer_name in target_layers:
             try:
                 target_layer = self.model.get_layer(layer_name)
@@ -100,7 +107,8 @@ class DynamicModelManager:
                 )
                 self.grad_models[layer_name] = g_model
             except Exception as e:
-                print(f"[ModelManager] Skipping grad model for {layer_name}: {e}")
+                print(
+                    f"[ModelManager] Skipping grad model for {layer_name}: {e}")
 
     def load_model_if_updated(self, force=False):
         if not app_config.get('auto_reload', True) and not force and self.model is not None:
@@ -113,17 +121,20 @@ class DynamicModelManager:
             if os.path.exists(self.npz_path) and os.path.getsize(self.npz_path) > 1000000:
                 current_mtime = os.path.getmtime(self.npz_path)
                 if current_mtime > self.last_mtime or self.model is None or force:
-                    print(f"[ModelManager] Loading fine-tuned weights from {self.npz_path}...")
+                    print(
+                        f"[ModelManager] Loading fine-tuned weights from {self.npz_path}...")
                     try:
                         built_model = create_fine_tuned_vgg19()
                         npz = np.load(self.npz_path)
-                        weights = [npz[f'arr_{i}'] for i in range(len(npz.files))]
+                        weights = [npz[f'arr_{i}']
+                                   for i in range(len(npz.files))]
                         built_model.set_weights(weights)
                         self.model = built_model
                         self.last_mtime = current_mtime
                         self.build_grad_model_cache()
                         gc.collect()
-                        print("[ModelManager] Model & Grad-CAM cache successfully loaded from model_weights.npz.")
+                        print(
+                            "[ModelManager] Model & Grad-CAM cache successfully loaded from model_weights.npz.")
                         return True
                     except Exception as e:
                         print(f"[ModelManager] Error loading npz weights: {e}")
@@ -132,7 +143,8 @@ class DynamicModelManager:
             if os.path.exists(self.weights_path):
                 current_mtime = os.path.getmtime(self.weights_path)
                 if current_mtime > self.last_mtime or self.model is None or force:
-                    print(f"[ModelManager] Loading fine-tuned weights from {self.weights_path}...")
+                    print(
+                        f"[ModelManager] Loading fine-tuned weights from {self.weights_path}...")
                     try:
                         built_model = create_fine_tuned_vgg19()
                         built_model.load_weights(self.weights_path)
@@ -140,7 +152,8 @@ class DynamicModelManager:
                         self.last_mtime = current_mtime
                         self.build_grad_model_cache()
                         gc.collect()
-                        print("[ModelManager] Model & Grad-CAM cache successfully loaded from model.weights.h5.")
+                        print(
+                            "[ModelManager] Model & Grad-CAM cache successfully loaded from model.weights.h5.")
                         return True
                     except Exception as e:
                         print(f"[ModelManager] Error loading h5 weights: {e}")
@@ -149,20 +162,24 @@ class DynamicModelManager:
             if os.path.exists(self.model_path):
                 current_mtime = os.path.getmtime(self.model_path)
                 if current_mtime > self.last_mtime or self.model is None or force:
-                    print(f"[ModelManager] Loading full model from {self.model_path}...")
+                    print(
+                        f"[ModelManager] Loading full model from {self.model_path}...")
                     try:
-                        loaded_model = tf.keras.models.load_model(self.model_path)
+                        loaded_model = tf.keras.models.load_model(
+                            self.model_path)
                         self.model = loaded_model
                         self.last_mtime = current_mtime
                         self.build_grad_model_cache()
                         gc.collect()
-                        print("[ModelManager] Full model successfully loaded from model.h5.")
+                        print(
+                            "[ModelManager] Full model successfully loaded from model.h5.")
                         return True
                     except Exception as e:
                         print(f"[ModelManager] Error loading full model: {e}")
 
             if self.model is None:
-                print("[ModelManager] Warning: No model weights file could be loaded.")
+                print(
+                    "[ModelManager] Warning: No model weights file could be loaded.")
                 return False
             return True
 
@@ -178,19 +195,23 @@ class DynamicModelManager:
             try:
                 fallback_model = tf.keras.models.Model(
                     inputs=self.model.input,
-                    outputs=[self.model.get_layer(layer_name).output, self.model.output]
+                    outputs=[self.model.get_layer(
+                        layer_name).output, self.model.output]
                 )
                 return fallback_model, layer_name
             except Exception:
                 pass
-            conv_layers = [l.name for l in self.model.layers if 'conv' in l.name]
+            conv_layers = [
+                l.name for l in self.model.layers if 'conv' in l.name]
             fallback_name = conv_layers[-1] if conv_layers else 'block5_conv4'
             fallback_model = tf.keras.models.Model(
                 inputs=self.model.input,
-                outputs=[self.model.get_layer(fallback_name).output, self.model.output]
+                outputs=[self.model.get_layer(
+                    fallback_name).output, self.model.output]
             )
             return fallback_model, fallback_name
         return None, layer_name
+
 
 model_manager = DynamicModelManager(MODEL_PATH, WEIGHTS_PATH, NPZ_WEIGHTS_PATH)
 
@@ -202,9 +223,10 @@ def crop_brain_contour(image):
     thres = cv2.threshold(gray, 45, 255, cv2.THRESH_BINARY)[1]
     thres = cv2.erode(thres, None, iterations=2)
     thres = cv2.dilate(thres, None, iterations=2)
-    cnts = cv2.findContours(thres.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = cv2.findContours(
+        thres.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cnts = imutils.grab_contours(cnts)
-    
+
     if not cnts:
         return image
 
@@ -213,7 +235,7 @@ def crop_brain_contour(image):
     extRight = tuple(c[c[:, :, 0].argmax()][0])
     extTop = tuple(c[c[:, :, 1].argmin()][0])
     extBot = tuple(c[c[:, :, 1].argmax()][0])
-    
+
     cropped = image[extTop[1]:extBot[1], extLeft[0]:extRight[0]]
     if cropped.size == 0:
         return image
@@ -225,7 +247,8 @@ def compute_gradcam(img_tensor, last_conv_layer_name=None, pred_index=None):
     if last_conv_layer_name is None:
         last_conv_layer_name = app_config.get('target_layer', 'block5_conv4')
 
-    grad_model, used_layer_name = model_manager.get_grad_model(last_conv_layer_name)
+    grad_model, used_layer_name = model_manager.get_grad_model(
+        last_conv_layer_name)
     if grad_model is None:
         raise ValueError("Grad-CAM model graph not available.")
 
@@ -255,13 +278,15 @@ def generate_gradcam_overlay(original_img_rgb, heatmap, alpha=None, colormap_nam
 
     cv2_colormap = COLORMAP_DICT.get(colormap_name.upper(), cv2.COLORMAP_JET)
 
-    heatmap_resized = cv2.resize(heatmap, (original_img_rgb.shape[1], original_img_rgb.shape[0]))
+    heatmap_resized = cv2.resize(
+        heatmap, (original_img_rgb.shape[1], original_img_rgb.shape[0]))
     heatmap_uint8 = np.uint8(255 * heatmap_resized)
-    
+
     colored_heatmap = cv2.applyColorMap(heatmap_uint8, cv2_colormap)
     colored_heatmap = cv2.cvtColor(colored_heatmap, cv2.COLOR_BGR2RGB)
-    
-    overlay = (colored_heatmap * alpha + original_img_rgb * (1.0 - alpha)).astype(np.uint8)
+
+    overlay = (colored_heatmap * alpha + original_img_rgb *
+               (1.0 - alpha)).astype(np.uint8)
     return overlay
 
 
@@ -281,7 +306,8 @@ def index():
 def get_status():
     model, mtime = model_manager.get_model()
     is_loaded = model is not None
-    mtime_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mtime)) if mtime > 0 else 'N/A'
+    mtime_str = time.strftime(
+        '%Y-%m-%d %H:%M:%S', time.localtime(mtime)) if mtime > 0 else 'N/A'
     return jsonify({
         'status': 'ready' if is_loaded else 'error',
         'model_loaded': is_loaded,
@@ -317,7 +343,7 @@ def handle_settings():
             model_manager.load_model_if_updated(force=True)
 
         return jsonify({'success': True, 'config': app_config})
-    
+
     return jsonify({'success': True, 'config': app_config})
 
 
@@ -347,7 +373,8 @@ def analyze():
             return jsonify({'error': 'Failed to decode image format.'}), 400
 
         cropped_bgr = crop_brain_contour(img_raw)
-        resized_bgr = cv2.resize(cropped_bgr, IMG_SIZE, interpolation=cv2.INTER_CUBIC)
+        resized_bgr = cv2.resize(
+            cropped_bgr, IMG_SIZE, interpolation=cv2.INTER_CUBIC)
         img_rgb = cv2.cvtColor(resized_bgr, cv2.COLOR_BGR2RGB)
 
         input_tensor = np.expand_dims(img_rgb / 255.0, axis=0)
@@ -360,7 +387,8 @@ def analyze():
         predicted_label = class_labels.get(pred_class_idx, 'Unknown')
 
         # Fast Grad-CAM computation using pre-cached model graph
-        heatmap, used_layer = compute_gradcam(input_tensor, pred_index=pred_class_idx)
+        heatmap, used_layer = compute_gradcam(
+            input_tensor, pred_index=pred_class_idx)
         gradcam_overlay = generate_gradcam_overlay(img_rgb, heatmap)
 
         original_b64 = image_to_base64(img_rgb)
@@ -408,7 +436,8 @@ def predict_gradio(image):
     try:
         img_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         cropped_bgr = crop_brain_contour(img_bgr)
-        resized_bgr = cv2.resize(cropped_bgr, IMG_SIZE, interpolation=cv2.INTER_CUBIC)
+        resized_bgr = cv2.resize(
+            cropped_bgr, IMG_SIZE, interpolation=cv2.INTER_CUBIC)
         img_rgb = cv2.cvtColor(resized_bgr, cv2.COLOR_BGR2RGB)
 
         input_tensor = np.expand_dims(img_rgb / 255.0, axis=0)
@@ -419,7 +448,8 @@ def predict_gradio(image):
         class_labels = {0: 'Non-Tumorous', 1: 'Tumorous'}
         predicted_label = class_labels.get(pred_class_idx, 'Unknown')
 
-        heatmap, used_layer = compute_gradcam(input_tensor, pred_index=pred_class_idx)
+        heatmap, used_layer = compute_gradcam(
+            input_tensor, pred_index=pred_class_idx)
         gradcam_overlay = generate_gradcam_overlay(img_rgb, heatmap)
 
         summary_text = f"Diagnosis: {predicted_label}\nConfidence: {confidence * 100:.2f}%\nTarget Layer: Layer: {used_layer} heat distribution"
@@ -427,11 +457,14 @@ def predict_gradio(image):
     except Exception as e:
         return f"Error: {str(e)}", None
 
+
 # Build robust Gradio Blocks UI (avoids OpenAPI schema and localhost proxy bugs)
 with gr.Blocks(title="NeuroScan AI - Brain Tumor Classification") as demo:
-    gr.Markdown("# 🧠 NeuroScan AI - Brain Tumor Classification & Neural Explainability")
-    gr.Markdown("Fine-tuned VGG-19 Deep Learning Model with Grad-CAM Activation Heatmaps (95.57% Train / 93.55% Test Accuracy).")
-    
+    gr.Markdown(
+        "# 🧠 NeuroScan AI - Brain Tumor Classification & Neural Explainability")
+    gr.Markdown(
+        "Fine-tuned VGG-19 Deep Learning Model with Grad-CAM Activation Heatmaps (95.57% Train / 93.55% Test Accuracy).")
+
     with gr.Row():
         with gr.Column():
             input_img = gr.Image(label="Upload Brain MRI Scan")
@@ -439,9 +472,15 @@ with gr.Blocks(title="NeuroScan AI - Brain Tumor Classification") as demo:
         with gr.Column():
             output_txt = gr.Textbox(label="Diagnostic Output")
             output_img = gr.Image(label="Grad-CAM Neural Heatmap Overlay")
-            
-    btn.click(fn=predict_gradio, inputs=input_img, outputs=[output_txt, output_img])
+
+    btn.click(fn=predict_gradio, inputs=input_img,
+              outputs=[output_txt, output_img])
 
 if __name__ == '__main__':
     print("Starting NeuroScan AI on Hugging Face Spaces...")
-    demo.launch()
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=int(os.getenv("PORT", "7860")),
+        share=False,
+        show_error=True,
+    )
